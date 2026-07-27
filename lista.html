@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lista Geral — Rotina GGE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar" id="shell"></div>
+  <div class="main">
+    <div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+      <div>
+        <div class="page-title">Lista Geral</div>
+        <div class="page-sub">Todas as tarefas em tabela — filtre, ordene, exporte</div>
+      </div>
+      <button class="btn" onclick="exportarCSV()">Exportar CSV</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="frow">
+        <div><label class="f" style="margin-top:0">Pessoa</label>
+          <select id="f-pessoa" onchange="aplicar()"><option value="">Todas</option></select></div>
+        <div><label class="f" style="margin-top:0">Setor</label>
+          <select id="f-setor" onchange="aplicar()"><option value="">Todos</option></select></div>
+        <div><label class="f" style="margin-top:0">Status</label>
+          <select id="f-status" onchange="aplicar()">
+            <option value="">Todos</option>
+            <option value="pendente">Pendente</option>
+            <option value="atrasada">Atrasada (vencida)</option>
+            <option value="concluida">Concluída no prazo</option>
+            <option value="concluida_atraso">Concluída com atraso</option>
+            <option value="concluida_antecipada">Antecipada</option>
+            <option value="pulada">Pulada</option>
+          </select></div>
+        <div><label class="f" style="margin-top:0">De</label><input id="f-de" type="date" onchange="carregarDados()"></div>
+        <div><label class="f" style="margin-top:0">Até</label><input id="f-ate" type="date" onchange="carregarDados()"></div>
+      </div>
+    </div>
+    <div id="conteudo" class="loading">Carregando…</div>
+  </div>
+</div>
+<script>
+let dados = [], visiveis = [], ordCol = 'data_prevista', ordAsc = true;
+
+const COLS = [
+  ['data_prevista', 'Data'], ['nome', 'Tarefa'], ['responsavel', 'Responsável'],
+  ['setor', 'Setor'], ['formato', 'Formato'], ['horario', 'Hora'],
+  ['status', 'Status'], ['dias_atraso', 'Atraso'], ['comentario', 'Comentário / Justificativa']
+];
+
+async function carregarDados() {
+  const de = document.getElementById('f-de').value, ate = document.getElementById('f-ate').value;
+  const { data, error } = await R.sb.from('vw_ocorrencias').select('*')
+    .gte('data_prevista', de).lte('data_prevista', ate)
+    .order('data_prevista', { ascending: false }).limit(3000);
+  if (error) return R.toast('Erro ao carregar', 'err');
+  dados = data || [];
+  aplicar();
+}
+
+function aplicar() {
+  const p = document.getElementById('f-pessoa').value;
+  const s = document.getElementById('f-setor').value;
+  const st = document.getElementById('f-status').value;
+  visiveis = dados.filter(o => {
+    if (p && o.responsavel_id !== p) return false;
+    if (s && o.setor_id !== s) return false;
+    if (st === 'atrasada') { if (!o.atrasada) return false; }
+    else if (st && o.status !== st) return false;
+    return true;
+  });
+  ordenar(ordCol, false);
+}
+
+function ordenar(col, alternar) {
+  if (alternar) { ordAsc = ordCol === col ? !ordAsc : true; ordCol = col; }
+  visiveis.sort((a, b) => {
+    let x = a[col], y = b[col];
+    if (x == null) x = ''; if (y == null) y = '';
+    if (typeof x === 'number' && typeof y === 'number') return ordAsc ? x - y : y - x;
+    return ordAsc ? String(x).localeCompare(String(y)) : String(y).localeCompare(String(x));
+  });
+  render();
+}
+
+function render() {
+  const el = document.getElementById('conteudo');
+  if (!visiveis.length) { el.innerHTML = '<div class="empty">Nada encontrado com esses filtros.</div>'; return; }
+  let h = `<div class="hint" style="margin-bottom:10px">${visiveis.length} tarefa${visiveis.length>1?'s':''} — clique no título da coluna para ordenar</div>
+    <div class="tbl-wrap"><table><thead><tr>`;
+  COLS.forEach(([c, n]) => h += `<th onclick="ordenar('${c}', true)">${n} ${ordCol===c ? (ordAsc?'↑':'↓') : ''}</th>`);
+  h += `</tr></thead><tbody>`;
+  visiveis.forEach(o => {
+    const [stNome, stCor] = o.atrasada ? ['Atrasada', 'red'] : R.statusInfo(o.status);
+    h += `<tr>
+      <td style="white-space:nowrap">${R.fmtCurto(o.data_prevista)}</td>
+      <td style="font-weight:600">${R.esc(o.nome)}</td>
+      <td>${R.esc(o.responsavel)}</td>
+      <td>${R.esc(o.setor || '—')}</td>
+      <td>${R.esc(o.formato || (o.tipo === 'abertura' ? 'Abertura do app' : '—'))}</td>
+      <td>${o.horario ? R.fmtHora(o.horario) : o.periodo ? R.periodoNome(o.periodo) : '—'}</td>
+      <td><span class="badge ${stCor}">${stNome}</span></td>
+      <td>${o.atrasada || o.status === 'concluida_atraso' ? (o.dias_atraso > 0 ? o.dias_atraso + 'd' : '<1d') : '—'}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${R.esc(o.comentario || o.justificativa || '')}">${R.esc(o.comentario || o.justificativa || '—')}</td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>`;
+  el.innerHTML = h;
+}
+
+function exportarCSV() {
+  const linhas = [COLS.map(c => c[1]).join(';')];
+  visiveis.forEach(o => {
+    const [stNome] = o.atrasada ? ['Atrasada'] : R.statusInfo(o.status);
+    const v = [o.data_prevista, o.nome, o.responsavel, o.setor || '', o.formato || '',
+      o.horario || o.periodo || '', stNome, o.dias_atraso || 0,
+      (o.comentario || o.justificativa || '').replace(/[;\n]/g, ' ')];
+    linhas.push(v.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(';'));
+  });
+  const blob = new Blob(['﻿' + linhas.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rotina-lista-' + R.hojeISO() + '.csv';
+  a.click();
+  R.toast('CSV exportado', 'ok');
+}
+
+window.recarregar = carregarDados;
+
+(async function () {
+  const ok = await R.init('lista');
+  if (!ok) return;
+  const selP = document.getElementById('f-pessoa');
+  R.gerenciaveis().forEach(p => selP.innerHTML += `<option value="${p.id}">${R.esc(p.nome)}</option>`);
+  const selS = document.getElementById('f-setor');
+  R.setores.forEach(s => selS.innerHTML += `<option value="${s.id}">${R.esc(s.nome)}</option>`);
+  const hoje = R.hojeISO();
+  document.getElementById('f-de').value = R.addDias(hoje, -30);
+  document.getElementById('f-ate').value = R.addDias(hoje, 30);
+  await carregarDados();
+})();
+</script>
+</body>
+</html>

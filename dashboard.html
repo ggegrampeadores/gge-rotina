@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meu Dia — Rotina GGE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar" id="shell"></div>
+  <div class="main">
+    <div class="page-head">
+      <div class="page-title" id="saudacao">…</div>
+      <div class="page-sub" id="dataHoje"></div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-t="hoje">Hoje</button>
+      <button class="tab" data-t="semana">Semana</button>
+      <button class="tab" data-t="proximas">Próximas</button>
+      <button class="tab" data-t="calendario">Calendário</button>
+      <button class="tab" data-t="desempenho">Desempenho</button>
+    </div>
+    <div id="conteudo" class="loading">Carregando seu dia…</div>
+  </div>
+</div>
+<script>
+let minhas = [], agenda = [], tabAtual = 'hoje', calMes = null, calSel = null;
+
+async function carregar() {
+  const hoje = R.hojeISO();
+  const de = R.addDias(hoje, -60), ate = R.addDias(hoje, 30);
+  const q1 = R.sb.from('vw_ocorrencias').select('*')
+    .eq('responsavel_id', R.me.id).gte('data_prevista', de).lte('data_prevista', ate)
+    .order('data_prevista').order('horario', { nullsFirst: false });
+  const q2 = R.sb.from('participantes_rotina').select('rotina_id').eq('pessoa_id', R.me.id);
+  const [r1, r2] = await Promise.all([q1, q2]);
+  minhas = r1.data || [];
+  agenda = [];
+  const ids = (r2.data || []).map(x => x.rotina_id);
+  if (ids.length) {
+    const r3 = await R.sb.from('vw_ocorrencias').select('*')
+      .in('rotina_id', ids).neq('responsavel_id', R.me.id)
+      .gte('data_prevista', hoje).lte('data_prevista', ate).order('data_prevista');
+    agenda = (r3.data || []).map(o => ({ ...o, _participante: true }));
+  }
+}
+
+function render() {
+  const el = document.getElementById('conteudo');
+  const hoje = R.hojeISO();
+  if (tabAtual === 'hoje') {
+    const atrasadas = minhas.filter(o => o.atrasada && o.data_prevista < hoje);
+    const doDia = minhas.filter(o => o.data_prevista === hoje)
+      .concat(agenda.filter(o => o.data_prevista === hoje));
+    let h = '';
+    if (atrasadas.length) {
+      h += `<div class="day-group-title"><span class="dot red"></span> Atrasadas — resolva primeiro</div>`;
+      h += atrasadas.map(o => R.taskHTML(o, { mostrarData: true })).join('');
+    }
+    h += `<div class="day-group-title"><span class="dot green"></span> ${R.fmtDia(hoje)}</div>`;
+    h += doDia.length ? doDia.map(o => R.taskHTML(o)).join('')
+      : `<div class="empty">Nada para hoje. Aproveite para adiantar algo na aba Próximas.</div>`;
+    el.innerHTML = h;
+
+  } else if (tabAtual === 'semana') {
+    let h = '';
+    for (let i = 0; i < 7; i++) {
+      const d = R.addDias(hoje, i);
+      const itens = minhas.filter(o => o.data_prevista === d)
+        .concat(agenda.filter(o => o.data_prevista === d));
+      if (!itens.length && i > 0) continue;
+      h += `<div class="day-group-title">${R.fmtDia(d)}</div>`;
+      h += itens.length ? itens.map(o => R.taskHTML(o)).join('')
+        : `<div class="empty">Livre</div>`;
+    }
+    el.innerHTML = h || '<div class="empty">Semana livre.</div>';
+
+  } else if (tabAtual === 'proximas') {
+    const fut = minhas.filter(o => o.data_prevista > hoje && o.status === 'pendente')
+      .concat(agenda.filter(o => o.data_prevista > hoje));
+    let h = `<div class="hint" style="margin-bottom:14px">Tudo que vem pela frente nos próximos 30 dias. Pode dar check antecipado se quiser adiantar.</div>`;
+    let dia = '';
+    fut.forEach(o => {
+      if (o.data_prevista !== dia) { dia = o.data_prevista; h += `<div class="day-group-title">${R.fmtDia(dia)}</div>`; }
+      h += R.taskHTML(o);
+    });
+    el.innerHTML = fut.length ? h : '<div class="empty">Nada agendado pela frente ainda.</div>';
+
+  } else if (tabAtual === 'calendario') {
+    renderCalendario(el);
+
+  } else if (tabAtual === 'desempenho') {
+    renderDesempenho(el);
+  }
+}
+
+function renderCalendario(el) {
+  const hoje = R.hojeISO();
+  if (!calMes) calMes = hoje.slice(0, 7);
+  const [ano, mes] = calMes.split('-').map(Number);
+  const prim = new Date(ano, mes - 1, 1);
+  const nDias = new Date(ano, mes, 0).getDate();
+  const nomeMes = prim.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const todos = minhas.concat(agenda);
+  let h = `<div class="cal-head">
+      <button class="btn sm" onclick="mudarMes(-1)">‹ anterior</button>
+      <div style="font-weight:800;font-size:16px;text-transform:capitalize">${nomeMes}</div>
+      <button class="btn sm" onclick="mudarMes(1)">próximo ›</button>
+    </div><div class="cal-grid">`;
+  ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].forEach(d => h += `<div class="cal-dow">${d}</div>`);
+  for (let i = 0; i < prim.getDay(); i++) h += `<div></div>`;
+  for (let d = 1; d <= nDias; d++) {
+    const iso = `${ano}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const itens = todos.filter(o => o.data_prevista === iso);
+    const pend = itens.filter(o => o.status === 'pendente' && !o.atrasada).length;
+    const late = itens.filter(o => o.atrasada).length;
+    const done = itens.filter(o => ['concluida','concluida_atraso','concluida_antecipada'].includes(o.status)).length;
+    let tags = '';
+    if (late) tags += `<span class="cal-tag" style="background:var(--red-soft);color:var(--red)">${late} atrasada${late>1?'s':''}</span>`;
+    if (pend) tags += `<span class="cal-tag" style="background:var(--accent-soft);color:var(--accent2)">${pend} pendente${pend>1?'s':''}</span>`;
+    if (done) tags += `<span class="cal-tag" style="background:var(--green-soft);color:var(--green)">${done} feita${done>1?'s':''}</span>`;
+    h += `<div class="cal-day ${iso===hoje?'today':''} ${iso===calSel?'sel':''}" onclick="selDia('${iso}')">
+      <div class="cal-num">${d}</div><div class="cal-tags">${tags}</div></div>`;
+  }
+  h += `</div><div id="cal-lista" style="margin-top:18px"></div>`;
+  el.innerHTML = h;
+  if (calSel) mostrarDia(calSel);
+}
+function mudarMes(n) {
+  const [a, m] = calMes.split('-').map(Number);
+  const d = new Date(a, m - 1 + n, 1);
+  calMes = d.toLocaleDateString('sv-SE').slice(0, 7);
+  calSel = null; render();
+}
+function selDia(iso) { calSel = iso; render(); }
+function mostrarDia(iso) {
+  const box = document.getElementById('cal-lista');
+  const itens = minhas.concat(agenda).filter(o => o.data_prevista === iso);
+  box.innerHTML = `<div class="day-group-title">${R.fmtDia(iso)}</div>` +
+    (itens.length ? itens.map(o => R.taskHTML(o)).join('') : '<div class="empty">Nada neste dia.</div>');
+}
+
+function renderDesempenho(el) {
+  const hoje = R.hojeISO();
+  const d30 = R.addDias(hoje, -30);
+  const passadas = minhas.filter(o => o.data_prevista >= d30 && o.data_prevista <= hoje && o.status !== 'pulada');
+  const noPrazo = passadas.filter(o => ['concluida','concluida_antecipada'].includes(o.status)).length;
+  const base = passadas.filter(o => o.status !== 'pendente' || o.atrasada).length;
+  const pct = base ? Math.round(100 * noPrazo / base) : 100;
+  const vencidas = minhas.filter(o => o.atrasada).length;
+  const cor = R.corDe(vencidas);
+  const mesAtual = hoje.slice(0, 7);
+  const feitasMes = minhas.filter(o => o.data_prevista.startsWith(mesAtual)
+    && ['concluida','concluida_atraso','concluida_antecipada'].includes(o.status)).length;
+  // sequência de dias sem atraso
+  let streak = 0;
+  for (let i = 0; i <= 60; i++) {
+    const d = R.addDias(hoje, -i);
+    const ruim = minhas.some(o => o.data_prevista === d &&
+      (o.status === 'concluida_atraso' || (o.status === 'pendente' && o.data_prevista < hoje)));
+    if (ruim) break;
+    streak++;
+  }
+  let msg = '';
+  if (vencidas === 0 && pct >= 95) msg = `Impecável, ${R.me.nome}! Tudo em dia e ${pct}% de pontualidade nos últimos 30 dias. Esse é o padrão que segura a empresa.`;
+  else if (vencidas === 0) msg = `Muito bem, ${R.me.nome} — nada em atraso agora. Continue nesse ritmo.`;
+  else if (vencidas <= 2) msg = `Quase lá: ${vencidas === 1 ? 'uma pendência vencida' : vencidas + ' pendências vencidas'}. Resolvendo hoje, você volta ao verde.`;
+  else msg = `Você tem ${vencidas} pendências vencidas acumuladas. Que tal começar pelas mais antigas na aba Hoje?`;
+  el.innerHTML = `
+    <div class="praise">${msg}</div>
+    <div class="grid grid-4">
+      <div class="kpi"><div class="kpi-label">Status atual</div>
+        <div class="kpi-value" style="display:flex;align-items:center;gap:10px"><span class="dot ${cor}" style="width:16px;height:16px"></span>${R.corNome(cor)}</div>
+        <div class="kpi-note">${vencidas} vencida${vencidas===1?'':'s'} em aberto</div></div>
+      <div class="kpi"><div class="kpi-label">Pontualidade 30 dias</div>
+        <div class="kpi-value">${pct}%</div><div class="kpi-note">${noPrazo} de ${base || 0} no prazo</div></div>
+      <div class="kpi"><div class="kpi-label">Sequência sem atraso</div>
+        <div class="kpi-value">${streak} dia${streak===1?'':'s'}</div><div class="kpi-note">contando até hoje</div></div>
+      <div class="kpi"><div class="kpi-label">Concluídas no mês</div>
+        <div class="kpi-value">${feitasMes}</div><div class="kpi-note">${new Date().toLocaleDateString('pt-BR',{month:'long'})}</div></div>
+    </div>`;
+}
+
+window.recarregar = async function () { await carregar(); render(); };
+
+(async function () {
+  const ok = await R.init('dashboard');
+  if (!ok) return;
+  const hora = new Date().getHours();
+  const sauda = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+  document.getElementById('saudacao').textContent = `${sauda}, ${R.me.nome}!`;
+  const d = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+  document.getElementById('dataHoje').textContent = d.charAt(0).toUpperCase() + d.slice(1);
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active'); tabAtual = t.dataset.t; render();
+  }));
+  await carregar(); render();
+})();
+</script>
+</body>
+</html>

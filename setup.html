@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup — Rotina GGE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar" id="shell"></div>
+  <div class="main">
+    <div class="page-head">
+      <div class="page-title">Setup</div>
+      <div class="page-sub">Parâmetros do Rotina — só admins enxergam esta página</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-t="pessoas">Pessoas</button>
+      <button class="tab" data-t="setores">Setores</button>
+      <button class="tab" data-t="ausencias">Ausências</button>
+      <button class="tab" data-t="formatos">Formatos</button>
+      <button class="tab" data-t="parametros">Parâmetros</button>
+      <button class="tab" data-t="log">Log</button>
+    </div>
+    <div id="conteudo" class="loading">Carregando…</div>
+  </div>
+</div>
+<script>
+let tab = 'pessoas', ausencias = [], logs = [];
+
+async function recarregarBase() {
+  const [pe, se, vi, fo, co] = await Promise.all([
+    R.sb.from('pessoas').select('*').order('nome'),
+    R.sb.from('setores').select('*').order('nome'),
+    R.sb.from('vinculos').select('*'),
+    R.sb.from('formatos_entrega').select('*').order('nome'),
+    R.sb.from('config').select('*')
+  ]);
+  R.pessoas = pe.data || []; R.setores = se.data || []; R.vinculos = vi.data || []; R.formatos = fo.data || [];
+  R.cfg = {}; (co.data || []).forEach(c => R.cfg[c.chave] = c.valor);
+}
+
+async function render() {
+  const el = document.getElementById('conteudo');
+
+  if (tab === 'pessoas') {
+    let h = `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button class="btn primary" onclick="novaPessoa()">+ Nova pessoa</button></div>
+      <div class="tbl-wrap"><table><thead><tr>
+      <th>Nome</th><th>Papel</th><th>Setores</th><th>Ativo</th><th style="text-align:right">Ações</th></tr></thead><tbody>`;
+    R.pessoas.forEach(p => {
+      const setores = R.setoresDe(p.id).map(x => `${x.nome}${x.papel_setor === 'chefe' ? ' (chefe)' : ''}`).join(', ');
+      h += `<tr>
+        <td style="font-weight:700">${R.esc(p.nome)}</td>
+        <td><select onchange="mudarPapel('${p.id}', this.value)" style="width:auto;padding:5px 9px">
+          <option value="usuario" ${p.papel === 'usuario' ? 'selected' : ''}>Usuário</option>
+          <option value="admin" ${p.papel === 'admin' ? 'selected' : ''}>Admin</option></select></td>
+        <td style="font-size:12.5px">${R.esc(setores || '—')}
+          <button class="btn sm ghost" onclick="editarVinculos('${p.id}')">editar</button></td>
+        <td>${p.ativo ? '<span class="badge green">sim</span>' : '<span class="badge gray">não</span>'}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn sm" onclick="resetarSenha('${p.id}')">resetar senha</button>
+          <button class="btn sm ${p.ativo ? 'danger' : ''}" onclick="alternarAtivo('${p.id}', ${!p.ativo})">${p.ativo ? 'desativar' : 'reativar'}</button>
+        </td></tr>`;
+    });
+    h += `</tbody></table></div>
+      <div class="hint">Senha inicial e após reset: nome da pessoa + 123 (ex.: Talita123). Cada um pode trocar a própria senha no menu "Minha senha".</div>`;
+    el.innerHTML = h;
+
+  } else if (tab === 'setores') {
+    let h = `<div style="display:flex;gap:10px;margin-bottom:14px">
+      <input id="novo-setor" placeholder="Nome do novo setor" style="max-width:280px">
+      <button class="btn primary" onclick="novoSetor()">Adicionar</button></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Setor</th><th>Chefes</th><th>Membros</th></tr></thead><tbody>`;
+    R.setores.forEach(s => {
+      const chefes = R.vinculos.filter(v => v.setor_id === s.id && v.papel_setor === 'chefe').map(v => R.pessoa(v.pessoa_id).nome);
+      const membros = R.vinculos.filter(v => v.setor_id === s.id && v.papel_setor === 'usuario').map(v => R.pessoa(v.pessoa_id).nome);
+      h += `<tr><td><input value="${R.esc(s.nome)}" onchange="renomearSetor('${s.id}', this.value)" style="max-width:220px;padding:6px 10px"></td>
+        <td>${R.esc(chefes.join(', ') || '—')}</td><td>${R.esc(membros.join(', ') || '—')}</td></tr>`;
+    });
+    h += `</tbody></table></div>
+      <div class="hint">Quem chefia ou participa de cada setor é definido na aba Pessoas → editar setores.</div>`;
+    el.innerHTML = h;
+
+  } else if (tab === 'ausencias') {
+    const { data } = await R.sb.from('ausencias').select('*').order('inicio', { ascending: false }).limit(100);
+    ausencias = data || [];
+    let h = `<div class="card" style="margin-bottom:16px"><div class="card-title">Marcar ausência</div>
+      <div class="frow">
+        <div><label class="f" style="margin-top:0">Pessoa</label>
+          <select id="a-pessoa">${R.pessoas.filter(p => p.ativo).map(p => `<option value="${p.id}">${R.esc(p.nome)}</option>`).join('')}</select></div>
+        <div><label class="f" style="margin-top:0">Início</label><input id="a-inicio" type="date"></div>
+        <div><label class="f" style="margin-top:0">Fim</label><input id="a-fim" type="date"></div>
+        <div><label class="f" style="margin-top:0">Motivo</label>
+          <select id="a-motivo"><option value="ferias">Férias</option><option value="licenca_medica">Licença médica</option><option value="outro">Outro</option></select></div>
+      </div>
+      <label class="f">Observação (opcional)</label><input id="a-obs">
+      <div style="margin-top:14px"><button class="btn primary" onclick="novaAusencia()">Registrar</button></div>
+      <div class="hint">No período, a pessoa não recebe tarefas nem cobranças, e as pendências já geradas no intervalo são removidas.</div>
+    </div>`;
+    h += `<div class="tbl-wrap"><table><thead><tr><th>Pessoa</th><th>Período</th><th>Motivo</th><th>Obs</th><th></th></tr></thead><tbody>`;
+    ausencias.forEach(a => {
+      h += `<tr><td style="font-weight:700">${R.esc(R.pessoa(a.pessoa_id).nome || '?')}</td>
+        <td>${R.fmtCurto(a.inicio)} — ${R.fmtCurto(a.fim)}</td>
+        <td><span class="badge gray">${R.motivoNome(a.motivo)}</span></td>
+        <td style="font-size:12.5px;color:var(--muted)">${R.esc(a.observacao || '—')}</td>
+        <td style="text-align:right"><button class="btn sm danger" onclick="removerAusencia('${a.id}')">remover</button></td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+    el.innerHTML = h;
+    if (!ausencias.length) document.querySelector('tbody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--dim)">Nenhuma ausência registrada</td></tr>';
+
+  } else if (tab === 'formatos') {
+    let h = `<div class="card" style="margin-bottom:16px"><div class="card-title">Novo formato de entrega</div>
+      <div class="frow">
+        <div><input id="fo-nome" placeholder="Ex.: Planilha, Orçamento, Vistoria..."></div>
+        <div><select id="fo-comp">
+          <option value="simples">Simples — só o check</option>
+          <option value="comunicacao">Comunicação — participantes, hora, local, pauta</option></select></div>
+        <div style="flex:0"><button class="btn primary" onclick="novoFormato()">Adicionar</button></div>
+      </div></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Formato</th><th>Comportamento</th><th>Ativo</th><th></th></tr></thead><tbody>`;
+    R.formatos.forEach(f => {
+      h += `<tr><td style="font-weight:700">${R.esc(f.nome)}</td>
+        <td><span class="badge ${f.comportamento === 'comunicacao' ? 'blue' : 'gray'}">${f.comportamento === 'comunicacao' ? 'Comunicação' : 'Simples'}</span></td>
+        <td>${f.ativo ? '<span class="badge green">sim</span>' : '<span class="badge gray">não</span>'}</td>
+        <td style="text-align:right"><button class="btn sm" onclick="alternarFormato('${f.id}', ${!f.ativo})">${f.ativo ? 'desativar' : 'reativar'}</button></td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+    el.innerHTML = h;
+
+  } else if (tab === 'parametros') {
+    const cores = R.cfg.cores || { amarelo_min: 1, laranja_min: 3, vermelho_min: 6 };
+    const dias = R.cfg.dias_abertura || [1,2,3,4,5];
+    const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    el.innerHTML = `
+      <div class="card"><div class="card-title">Tarefa diária "Abrir o programa"</div>
+        <div class="frow">
+          <div><label class="f" style="margin-top:0">Hora-limite</label>
+            <input id="p-hora" type="time" value="${(R.cfg.hora_limite_abertura || '12:00')}"></div>
+          <div><label class="f" style="margin-top:0">Dias em que vale</label>
+            <div class="chk-group">${DOW.map((d, i) =>
+              `<span class="chk-pill ${dias.includes(i) ? 'on' : ''}" data-d="${i}" onclick="this.classList.toggle('on')">${d}</span>`).join('')}</div></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-title">Cores de status — pendências vencidas em aberto</div>
+        <div class="frow">
+          <div><label class="f" style="margin-top:0"><span class="dot yellow"></span> Amarelo a partir de</label>
+            <input id="p-am" type="number" min="1" value="${cores.amarelo_min}"></div>
+          <div><label class="f" style="margin-top:0"><span class="dot orange"></span> Laranja a partir de</label>
+            <input id="p-la" type="number" min="1" value="${cores.laranja_min}"></div>
+          <div><label class="f" style="margin-top:0"><span class="dot red"></span> Vermelho a partir de</label>
+            <input id="p-ve" type="number" min="1" value="${cores.vermelho_min}"></div>
+        </div>
+        <div class="hint">Verde = zero vencidas. Com os valores padrão: 1–2 amarelo, 3–5 laranja, 6 ou mais vermelho.</div>
+      </div>
+      <div class="card"><div class="card-title">Relatório semanal fecha na</div>
+        <select id="p-fech" style="max-width:220px">${DOW.map((d, i) =>
+          `<option value="${i}" ${(R.cfg.dia_fechamento_semanal ?? 5) == i ? 'selected' : ''}>${d}</option>`).join('')}</select>
+      </div>
+      <div style="margin-top:16px"><button class="btn primary" onclick="salvarParametros()">Salvar parâmetros</button></div>`;
+
+  } else if (tab === 'log') {
+    const { data } = await R.sb.from('log_setup').select('*').order('quando', { ascending: false }).limit(200);
+    logs = data || [];
+    let h = `<div class="tbl-wrap"><table><thead><tr><th>Quando</th><th>Quem</th><th>Ação</th><th>Detalhe</th></tr></thead><tbody>`;
+    if (!logs.length) h += '<tr><td colspan="4" style="text-align:center;color:var(--dim)">Nada registrado ainda</td></tr>';
+    logs.forEach(l => {
+      h += `<tr><td style="white-space:nowrap">${new Date(l.quando).toLocaleString('pt-BR')}</td>
+        <td>${R.esc(R.pessoa(l.quem).nome || '—')}</td>
+        <td><span class="badge gray">${R.esc(l.acao)}</span></td>
+        <td style="font-size:12px;color:var(--muted)">${R.esc(l.detalhe ? JSON.stringify(l.detalhe) : '')}</td></tr>`;
+    });
+    h += `</tbody></table></div>`;
+    el.innerHTML = h;
+  }
+}
+
+// ---------- pessoas ----------
+function novaPessoa() {
+  R.modal(`
+    <div class="modal-title">Nova pessoa</div>
+    <div class="modal-sub">O login é criado junto, com senha Nome+123.</div>
+    <label class="f">Nome (uma palavra, ex.: Joana)</label><input id="np-nome">
+    <label class="f">Papel</label>
+    <select id="np-papel"><option value="usuario">Usuário</option><option value="admin">Admin</option></select>
+    <div class="modal-foot">
+      <button class="btn" onclick="R.fecharModal()">Cancelar</button>
+      <button class="btn primary" id="np-go">Criar</button>
+    </div>`);
+  document.getElementById('np-go').onclick = async () => {
+    const nome = document.getElementById('np-nome').value.trim();
+    const papel = document.getElementById('np-papel').value;
+    const { error } = await R.sb.rpc('rpc_criar_pessoa', { p_nome: nome, p_papel: papel });
+    if (error) return R.toast(error.message.replace(/^.*: /, ''), 'err');
+    R.fecharModal(); R.toast(`${nome} cadastrada — login ${nome}${'123'}`, 'ok');
+    await recarregarBase(); render();
+  };
+}
+async function mudarPapel(id, papel) {
+  const { error } = await R.sb.from('pessoas').update({ papel }).eq('id', id);
+  if (error) return R.toast(error.message, 'err');
+  R.log('mudar_papel', { pessoa: R.pessoa(id).nome, papel });
+  R.toast('Papel atualizado', 'ok'); await recarregarBase(); render();
+}
+async function alternarAtivo(id, ativo) {
+  const { error } = await R.sb.from('pessoas').update({ ativo }).eq('id', id);
+  if (error) return R.toast(error.message, 'err');
+  R.log(ativo ? 'reativar_pessoa' : 'desativar_pessoa', { pessoa: R.pessoa(id).nome });
+  R.toast(ativo ? 'Reativada' : 'Desativada', 'ok'); await recarregarBase(); render();
+}
+function resetarSenha(id) {
+  const p = R.pessoa(id);
+  R.confirmar(`Resetar a senha de ${p.nome}?`, `A senha volta a ser ${p.nome}123.`, async () => {
+    const { error } = await R.sb.rpc('rpc_resetar_senha', { p_pessoa: id });
+    if (error) return R.toast(error.message.replace(/^.*: /, ''), 'err');
+    R.toast(`Senha de ${p.nome} resetada para ${p.nome}123`, 'ok');
+  });
+}
+function editarVinculos(id) {
+  const p = R.pessoa(id);
+  let h = `<div class="modal-title">Setores de ${R.esc(p.nome)}</div>
+    <div class="modal-sub">Em cada setor, a pessoa pode ser membro ou chefe.</div>`;
+  R.setores.forEach(s => {
+    const v = R.vinculos.find(x => x.pessoa_id === id && x.setor_id === s.id);
+    h += `<div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+      <div style="flex:1;font-weight:600">${R.esc(s.nome)}</div>
+      <select data-setor="${s.id}" class="vinc-sel" style="width:150px;padding:6px 10px">
+        <option value="" ${!v ? 'selected' : ''}>Fora</option>
+        <option value="usuario" ${v && v.papel_setor === 'usuario' ? 'selected' : ''}>Membro</option>
+        <option value="chefe" ${v && v.papel_setor === 'chefe' ? 'selected' : ''}>Chefe</option>
+      </select></div>`;
+  });
+  h += `<div class="modal-foot">
+    <button class="btn" onclick="R.fecharModal()">Cancelar</button>
+    <button class="btn primary" id="vc-go">Salvar</button></div>`;
+  R.modal(h);
+  document.getElementById('vc-go').onclick = async () => {
+    await R.sb.from('vinculos').delete().eq('pessoa_id', id);
+    const novos = [];
+    document.querySelectorAll('.vinc-sel').forEach(sel => {
+      if (sel.value) novos.push({ pessoa_id: id, setor_id: sel.dataset.setor, papel_setor: sel.value });
+    });
+    if (novos.length) {
+      const { error } = await R.sb.from('vinculos').insert(novos);
+      if (error) return R.toast(error.message, 'err');
+    }
+    R.log('editar_vinculos', { pessoa: p.nome, setores: novos.length });
+    R.fecharModal(); R.toast('Setores atualizados', 'ok');
+    await recarregarBase(); render();
+  };
+}
+
+// ---------- setores ----------
+async function novoSetor() {
+  const nome = document.getElementById('novo-setor').value.trim();
+  if (!nome) return R.toast('Digite o nome do setor', 'err');
+  const { error } = await R.sb.from('setores').insert({ nome });
+  if (error) return R.toast(error.message, 'err');
+  R.log('criar_setor', { nome });
+  R.toast('Setor criado', 'ok'); await recarregarBase(); render();
+}
+async function renomearSetor(id, nome) {
+  nome = nome.trim();
+  if (!nome) return;
+  const { error } = await R.sb.from('setores').update({ nome }).eq('id', id);
+  if (error) return R.toast(error.message, 'err');
+  R.log('renomear_setor', { nome });
+  R.toast('Setor renomeado', 'ok'); await recarregarBase();
+}
+
+// ---------- ausências ----------
+async function novaAusencia() {
+  const row = {
+    pessoa_id: document.getElementById('a-pessoa').value,
+    inicio: document.getElementById('a-inicio').value,
+    fim: document.getElementById('a-fim').value,
+    motivo: document.getElementById('a-motivo').value,
+    observacao: document.getElementById('a-obs').value.trim() || null,
+    criado_por: R.me.id
+  };
+  if (!row.inicio || !row.fim) return R.toast('Preencha início e fim', 'err');
+  if (row.fim < row.inicio) return R.toast('Fim antes do início', 'err');
+  const { error } = await R.sb.from('ausencias').insert(row);
+  if (error) return R.toast(error.message, 'err');
+  R.log('registrar_ausencia', { pessoa: R.pessoa(row.pessoa_id).nome, de: row.inicio, ate: row.fim, motivo: row.motivo });
+  R.toast('Ausência registrada', 'ok'); render();
+}
+function removerAusencia(id) {
+  R.confirmar('Remover esta ausência?', 'As tarefas do período voltam a ser geradas.', async () => {
+    const a = ausencias.find(x => x.id === id);
+    const { error } = await R.sb.from('ausencias').delete().eq('id', id);
+    if (error) return R.toast(error.message, 'err');
+    await R.sb.rpc('rpc_gerar_ocorrencias');
+    R.log('remover_ausencia', { pessoa: R.pessoa(a.pessoa_id).nome });
+    R.toast('Ausência removida — tarefas regeneradas', 'ok'); render();
+  });
+}
+
+// ---------- formatos ----------
+async function novoFormato() {
+  const nome = document.getElementById('fo-nome').value.trim();
+  const comportamento = document.getElementById('fo-comp').value;
+  if (!nome) return R.toast('Digite o nome do formato', 'err');
+  const { error } = await R.sb.from('formatos_entrega').insert({ nome, comportamento });
+  if (error) return R.toast(error.message, 'err');
+  R.log('criar_formato', { nome, comportamento });
+  R.toast('Formato adicionado', 'ok'); await recarregarBase(); render();
+}
+async function alternarFormato(id, ativo) {
+  const { error } = await R.sb.from('formatos_entrega').update({ ativo }).eq('id', id);
+  if (error) return R.toast(error.message, 'err');
+  R.toast('Formato atualizado', 'ok'); await recarregarBase(); render();
+}
+
+// ---------- parâmetros ----------
+async function salvarParametros() {
+  const hora = document.getElementById('p-hora').value;
+  const dias = Array.from(document.querySelectorAll('.chk-pill.on')).map(p => Number(p.dataset.d));
+  const cores = {
+    amarelo_min: Number(document.getElementById('p-am').value),
+    laranja_min: Number(document.getElementById('p-la').value),
+    vermelho_min: Number(document.getElementById('p-ve').value)
+  };
+  if (!(cores.amarelo_min <= cores.laranja_min && cores.laranja_min <= cores.vermelho_min))
+    return R.toast('As faixas devem crescer: amarelo ≤ laranja ≤ vermelho', 'err');
+  if (!dias.length) return R.toast('Escolha pelo menos um dia', 'err');
+  const fech = Number(document.getElementById('p-fech').value);
+  const rows = [
+    { chave: 'hora_limite_abertura', valor: hora, atualizado_por: R.me.id },
+    { chave: 'dias_abertura', valor: dias, atualizado_por: R.me.id },
+    { chave: 'cores', valor: cores, atualizado_por: R.me.id },
+    { chave: 'dia_fechamento_semanal', valor: fech, atualizado_por: R.me.id }
+  ];
+  const { error } = await R.sb.from('config').upsert(rows);
+  if (error) return R.toast(error.message, 'err');
+  await R.sb.rpc('rpc_gerar_ocorrencias');
+  R.log('salvar_parametros', { hora, dias, cores, fechamento: fech });
+  R.toast('Parâmetros salvos', 'ok'); await recarregarBase();
+}
+
+window.recarregar = async () => { await recarregarBase(); render(); };
+
+(async function () {
+  const ok = await R.init('setup');
+  if (!ok) return;
+  if (!R.souAdmin) { location.href = 'dashboard.html'; return; }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active'); tab = t.dataset.t; render();
+  }));
+  render();
+})();
+</script>
+</body>
+</html>

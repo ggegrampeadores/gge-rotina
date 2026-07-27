@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relatórios — Rotina GGE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar" id="shell"></div>
+  <div class="main">
+    <div class="page-head">
+      <div class="page-title">Relatórios</div>
+      <div class="page-sub">Fechamento por pessoa e setor</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-t="semana">Semanal</button>
+      <button class="tab" data-t="mes">Mensal</button>
+    </div>
+    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <button class="btn sm" onclick="navegar(-1)">‹ anterior</button>
+      <div id="periodo-nome" style="font-weight:800;font-size:16px"></div>
+      <button class="btn sm" id="btn-prox" onclick="navegar(1)">próximo ›</button>
+    </div>
+    <div id="conteudo" class="loading">Carregando…</div>
+  </div>
+</div>
+<script>
+let modo = 'semana', offset = 0, dados = [];
+
+function intervalo() {
+  const hoje = R.hojeISO();
+  if (modo === 'semana') {
+    const d = new Date(hoje + 'T12:00:00');
+    const dow = d.getDay(); // 0=dom
+    const segunda = R.addDias(hoje, -(dow === 0 ? 6 : dow - 1) + offset * 7);
+    const domingo = R.addDias(segunda, 6);
+    return { de: segunda, ate: domingo, nome: `Semana de ${R.fmtCurto(segunda)} a ${R.fmtCurto(domingo)}` };
+  } else {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + offset);
+    const de = d.toLocaleDateString('sv-SE');
+    const fim = new Date(d.getFullYear(), d.getMonth() + 1, 0).toLocaleDateString('sv-SE');
+    const nome = d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    return { de, ate: fim, nome: nome.charAt(0).toUpperCase() + nome.slice(1) };
+  }
+}
+
+async function carregar() {
+  const { de, ate, nome } = intervalo();
+  document.getElementById('periodo-nome').textContent = nome;
+  document.getElementById('btn-prox').disabled = offset >= 0;
+  const ids = R.gerenciaveis().map(p => p.id);
+  const { data, error } = await R.sb.from('vw_ocorrencias').select('*')
+    .in('responsavel_id', ids).gte('data_prevista', de).lte('data_prevista', ate).limit(5000);
+  if (error) return R.toast('Erro ao carregar', 'err');
+  dados = data || [];
+  render();
+}
+
+function linhaDe(itens) {
+  const noPrazo = itens.filter(o => ['concluida','concluida_antecipada'].includes(o.status)).length;
+  const comAtraso = itens.filter(o => o.status === 'concluida_atraso').length;
+  const puladas = itens.filter(o => o.status === 'pulada').length;
+  const vencidas = itens.filter(o => o.atrasada).length;
+  const pendentes = itens.filter(o => o.status === 'pendente' && !o.atrasada).length;
+  const base = noPrazo + comAtraso + vencidas;
+  const pct = base ? Math.round(100 * noPrazo / base) : 100;
+  return { total: itens.length, noPrazo, comAtraso, puladas, vencidas, pendentes, pct };
+}
+
+function render() {
+  const el = document.getElementById('conteudo');
+  const pessoas = R.gerenciaveis();
+  const tot = linhaDe(dados);
+  let h = `<div class="grid grid-4" style="margin-bottom:18px">
+    <div class="kpi"><div class="kpi-label">No prazo</div><div class="kpi-value" style="color:var(--green)">${tot.noPrazo}</div></div>
+    <div class="kpi"><div class="kpi-label">Com atraso</div><div class="kpi-value" style="color:var(--orange)">${tot.comAtraso}</div></div>
+    <div class="kpi"><div class="kpi-label">Vencidas em aberto</div><div class="kpi-value" style="color:${tot.vencidas ? 'var(--red)' : 'var(--green)'}">${tot.vencidas}</div></div>
+    <div class="kpi"><div class="kpi-label">Pontualidade geral</div><div class="kpi-value">${tot.pct}%</div></div>
+  </div>`;
+
+  h += `<div class="tbl-wrap"><table><thead><tr>
+    <th>Pessoa</th><th>Setores</th><th>Total</th><th>No prazo</th><th>Com atraso</th>
+    <th>Vencidas</th><th>Puladas</th><th>A vencer</th><th>Pontualidade</th><th>Status</th>
+  </tr></thead><tbody>`;
+  pessoas.forEach(p => {
+    const itens = dados.filter(o => o.responsavel_id === p.id);
+    if (!itens.length) return;
+    const l = linhaDe(itens);
+    const st = R.sb ? R.corDe(itens.filter(o => o.atrasada).length) : 'green';
+    h += `<tr>
+      <td style="font-weight:700">${R.esc(p.nome)}</td>
+      <td style="font-size:12.5px;color:var(--muted)">${R.esc(R.setoresDe(p.id).map(x => x.nome).join(', ') || '—')}</td>
+      <td>${l.total}</td>
+      <td style="color:var(--green);font-weight:700">${l.noPrazo}</td>
+      <td style="color:var(--orange);font-weight:700">${l.comAtraso}</td>
+      <td style="color:${l.vencidas ? 'var(--red)' : 'var(--muted)'};font-weight:700">${l.vencidas}</td>
+      <td>${l.puladas}</td>
+      <td>${l.pendentes}</td>
+      <td style="font-weight:700">${l.pct}%</td>
+      <td><span class="dot ${st}"></span></td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>`;
+
+  // por setor
+  h += `<div class="day-group-title sec-gap">Por setor</div><div class="grid grid-3">`;
+  R.setores.forEach(s => {
+    const itens = dados.filter(o => o.setor_id === s.id);
+    if (!itens.length) return;
+    const l = linhaDe(itens);
+    h += `<div class="kpi"><div class="kpi-label">${R.esc(s.nome)}</div>
+      <div class="kpi-value">${l.pct}%</div>
+      <div class="kpi-note">${l.noPrazo} no prazo · ${l.comAtraso} tarde · ${l.vencidas} vencidas</div></div>`;
+  });
+  h += `</div>`;
+  el.innerHTML = h;
+}
+
+function navegar(n) { offset += n; carregar(); }
+window.recarregar = carregar;
+
+(async function () {
+  const ok = await R.init('relatorios');
+  if (!ok) return;
+  if (!R.souAdmin && !R.souChefe) { location.href = 'dashboard.html'; return; }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active'); modo = t.dataset.t; offset = 0; carregar();
+  }));
+  await carregar();
+})();
+</script>
+</body>
+</html>

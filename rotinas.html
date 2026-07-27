@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rotinas — Rotina GGE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar" id="shell"></div>
+  <div class="main">
+    <div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">
+      <div>
+        <div class="page-title">Rotinas</div>
+        <div class="page-sub">Os modelos que geram as tarefas do dia a dia</div>
+      </div>
+      <button class="btn primary" onclick="abrirForm()">+ Nova rotina</button>
+    </div>
+    <div id="conteudo" class="loading">Carregando…</div>
+  </div>
+</div>
+<script>
+let rotinas = [], participantes = [];
+
+const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+const INTERVALOS = { 1:'Mensal', 2:'Bimestral', 3:'Trimestral', 6:'Semestral', 12:'Anual' };
+
+async function carregar() {
+  const [r1, r2] = await Promise.all([
+    R.sb.from('rotinas').select('*').order('criado_em', { ascending: false }),
+    R.sb.from('participantes_rotina').select('*')
+  ]);
+  rotinas = r1.data || [];
+  participantes = r2.data || [];
+}
+
+function possoGerir(r) {
+  if (R.souAdmin || r.criado_por === R.me.id) return true;
+  const meusSetores = R.vinculos.filter(v => v.pessoa_id === R.me.id && v.papel_setor === 'chefe').map(v => v.setor_id);
+  return R.vinculos.some(v => v.pessoa_id === r.criado_por && meusSetores.includes(v.setor_id));
+}
+
+function resumoRecorrencia(r) {
+  if (r.tipo_recorrencia === 'semanal') return 'Toda ' + (r.dias_semana || []).map(d => DOW[d]).join(', ');
+  if (r.tipo_recorrencia === 'por_data') return `${INTERVALOS[r.intervalo_meses || 1]}, dia ${r.dia_mes}`;
+  if (r.tipo_recorrencia === 'unica') return 'Única — ' + R.fmtCurto(r.data_unica);
+  if (r.tipo_recorrencia === 'pos_evento') {
+    const pai = rotinas.find(x => x.id === r.rotina_pai_id);
+    return `Após "${pai ? pai.nome : 'evento'}" (${r.prazo_dias_apos} dia${r.prazo_dias_apos===1?'':'s'} útil${r.prazo_dias_apos===1?'':'eis'})`;
+  }
+  return '';
+}
+
+function render() {
+  const el = document.getElementById('conteudo');
+  const ativas = rotinas.filter(r => r.ativa && !r.pausada);
+  const pausadas = rotinas.filter(r => r.ativa && r.pausada);
+  const encerradas = rotinas.filter(r => !r.ativa);
+  const card = r => {
+    const fmt = R.formatos.find(f => f.id === r.formato_id);
+    const parts = participantes.filter(p => p.rotina_id === r.id).map(p => R.pessoa(p.pessoa_id).nome).filter(Boolean);
+    const gerir = possoGerir(r);
+    let acoes = '';
+    if (gerir && r.ativa) {
+      acoes = `<button class="btn sm" onclick="abrirForm('${r.id}')">editar</button>` +
+        (r.pausada
+          ? `<button class="btn sm" onclick="retomar('${r.id}')">retomar</button>`
+          : `<button class="btn sm" onclick="pausar('${r.id}')">pausar</button>`) +
+        `<button class="btn sm danger" onclick="encerrar('${r.id}')">encerrar</button>`;
+    }
+    return `<div class="task ${r.pausada ? 'done' : ''}">
+      <div class="task-body">
+        <div class="task-name">${R.esc(r.nome)}</div>
+        ${r.descricao ? `<div class="task-desc">${R.esc(r.descricao)}</div>` : ''}
+        <div class="task-meta">
+          <span class="badge blue">${R.esc(R.pessoa(r.responsavel_id).nome || '?')}</span>
+          <span class="badge gray">${R.esc(resumoRecorrencia(r))}</span>
+          ${fmt ? `<span class="badge gray">${R.esc(fmt.nome)}</span>` : ''}
+          ${r.setor_id ? `<span class="badge gray">${R.esc(R.setor(r.setor_id).nome || '')}</span>` : ''}
+          ${r.horario ? `<span class="badge gray">${R.fmtHora(r.horario)}</span>` : r.periodo ? `<span class="badge gray">${R.periodoNome(r.periodo)}</span>` : ''}
+          ${parts.length ? `<span class="badge blue" title="${R.esc(parts.join(', '))}">${parts.length} participante${parts.length>1?'s':''}</span>` : ''}
+          ${r.pausada ? `<span class="badge yellow">pausada${r.pausada_ate ? ' até ' + R.fmtCurto(r.pausada_ate) : ''}</span>` : ''}
+          <span class="badge gray" style="opacity:.7">criada por ${R.esc(R.pessoa(r.criado_por).nome || '?')}</span>
+        </div>
+      </div>
+      <div class="task-actions">${acoes}</div>
+    </div>`;
+  };
+  let h = '';
+  h += `<div class="day-group-title"><span class="dot green"></span> Ativas (${ativas.length})</div>`;
+  h += ativas.length ? ativas.map(card).join('') : '<div class="empty">Nenhuma rotina ativa. Crie a primeira!</div>';
+  if (pausadas.length) {
+    h += `<div class="day-group-title"><span class="dot yellow"></span> Pausadas (${pausadas.length})</div>` + pausadas.map(card).join('');
+  }
+  if (encerradas.length) {
+    h += `<div class="day-group-title"><span class="dot gray"></span> Encerradas (${encerradas.length})</div>` + encerradas.map(card).join('');
+  }
+  el.innerHTML = h;
+}
+
+// ---------- formulário ----------
+function abrirForm(id) {
+  const r = id ? rotinas.find(x => x.id === id) : null;
+  const gerenciaveis = R.gerenciaveis();
+  const parts = r ? participantes.filter(p => p.rotina_id === r.id).map(p => p.pessoa_id) : [];
+  const pais = rotinas.filter(x => x.ativa && x.tipo_recorrencia !== 'pos_evento' && (!r || x.id !== r.id));
+
+  R.modal(`
+    <div class="modal-title">${r ? 'Editar rotina' : 'Nova rotina'}</div>
+    <label class="f">Nome da tarefa *</label>
+    <input id="f-nome" value="${r ? R.esc(r.nome) : ''}" placeholder="Ex.: Relatório semanal de vendas">
+    <label class="f">Breve descrição</label>
+    <textarea id="f-desc" rows="2" placeholder="O que precisa ser feito / entregue">${r ? R.esc(r.descricao || '') : ''}</textarea>
+    <div class="frow">
+      <div><label class="f">Responsável *</label>
+        <select id="f-resp">${gerenciaveis.map(p => `<option value="${p.id}" ${r && r.responsavel_id === p.id ? 'selected' : ''}>${R.esc(p.nome)}</option>`).join('')}</select></div>
+      <div><label class="f">Setor</label>
+        <select id="f-setor"><option value="">—</option>${R.setores.map(s => `<option value="${s.id}" ${r && r.setor_id === s.id ? 'selected' : ''}>${R.esc(s.nome)}</option>`).join('')}</select></div>
+    </div>
+    <label class="f">Formato de entrega</label>
+    <select id="f-formato" onchange="mudouFormato()">${R.formatos.filter(f => f.ativo).map(f =>
+      `<option value="${f.id}" data-c="${f.comportamento}" ${r && r.formato_id === f.id ? 'selected' : ''}>${R.esc(f.nome)}</option>`).join('')}</select>
+    <div id="f-com" style="display:none">
+      <label class="f">Participantes</label>
+      <div class="chk-group" id="f-parts">${R.pessoas.filter(p => p.ativo).map(p =>
+        `<span class="chk-pill ${parts.includes(p.id) ? 'on' : ''}" data-id="${p.id}" onclick="this.classList.toggle('on')">${R.esc(p.nome)}</span>`).join('')}</div>
+      <div class="frow">
+        <div><label class="f">Local / link / telefone</label><input id="f-local" value="${r ? R.esc(r.local_link || '') : ''}"></div>
+      </div>
+      <label class="f">Pauta</label>
+      <textarea id="f-pauta" rows="2">${r ? R.esc(r.pauta || '') : ''}</textarea>
+    </div>
+    <label class="f">Quando acontece? *</label>
+    <select id="f-tipo" onchange="mudouTipo()">
+      <option value="semanal" ${r && r.tipo_recorrencia === 'semanal' ? 'selected' : ''}>Toda semana (dias da semana)</option>
+      <option value="por_data" ${r && r.tipo_recorrencia === 'por_data' ? 'selected' : ''}>Dia fixo do mês (mensal, bimestral…)</option>
+      <option value="unica" ${r && r.tipo_recorrencia === 'unica' ? 'selected' : ''}>Uma vez só (data única)</option>
+      <option value="pos_evento" ${r && r.tipo_recorrencia === 'pos_evento' ? 'selected' : ''}>Depois de um evento (ex.: ata após reunião)</option>
+    </select>
+    <div id="t-semanal" style="display:none">
+      <label class="f">Dias da semana</label>
+      <div class="chk-group">${DOW.map((d, i) =>
+        `<span class="chk-pill ${r && (r.dias_semana || []).includes(i) ? 'on' : ''}" data-d="${i}" onclick="this.classList.toggle('on')">${d}</span>`).join('')}</div>
+    </div>
+    <div id="t-por_data" style="display:none">
+      <div class="frow">
+        <div><label class="f">Dia do mês</label><input id="f-diames" type="number" min="1" max="31" value="${r && r.dia_mes || 15}"></div>
+        <div><label class="f">Frequência</label>
+          <select id="f-intervalo">${Object.entries(INTERVALOS).map(([v, n]) =>
+            `<option value="${v}" ${r && r.intervalo_meses == v ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div><label class="f">A partir do mês</label>
+          <select id="f-mesancora">${Array.from({length:12},(_, i) =>
+            `<option value="${i+1}" ${(r && r.mes_ancora ? r.mes_ancora === i+1 : new Date().getMonth() === i) ? 'selected' : ''}>${new Date(2026, i, 1).toLocaleDateString('pt-BR', {month:'long'})}</option>`).join('')}</select></div>
+      </div>
+    </div>
+    <div id="t-unica" style="display:none">
+      <label class="f">Data</label><input id="f-data" type="date" value="${r && r.data_unica || R.hojeISO()}">
+    </div>
+    <div id="t-pos_evento" style="display:none">
+      <div class="frow">
+        <div><label class="f">Depois de qual rotina?</label>
+          <select id="f-pai">${pais.map(p => `<option value="${p.id}" ${r && r.rotina_pai_id === p.id ? 'selected' : ''}>${R.esc(p.nome)}</option>`).join('')}</select></div>
+        <div><label class="f">Prazo (dias úteis após o check)</label>
+          <input id="f-prazo" type="number" min="0" max="30" value="${r && r.prazo_dias_apos != null ? r.prazo_dias_apos : 2}"></div>
+      </div>
+      <div class="hint">A tarefa nasce quando o responsável der check no evento. Ex.: reunião concluída → ata em 2 dias úteis.</div>
+    </div>
+    <label class="f">Momento do dia</label>
+    <select id="f-momento" onchange="mudouMomento()">
+      <option value="">Sem horário — vale o dia todo</option>
+      <option value="periodo" ${r && r.periodo ? 'selected' : ''}>Período (manhã / tarde / noite)</option>
+      <option value="hora" ${r && r.horario ? 'selected' : ''}>Hora exata</option>
+    </select>
+    <div id="m-periodo" style="display:none"><label class="f">Período</label>
+      <select id="f-periodo">
+        <option value="manha" ${r && r.periodo === 'manha' ? 'selected' : ''}>Manhã</option>
+        <option value="tarde" ${r && r.periodo === 'tarde' ? 'selected' : ''}>Tarde</option>
+        <option value="noite" ${r && r.periodo === 'noite' ? 'selected' : ''}>Noite</option>
+      </select></div>
+    <div id="m-hora" style="display:none"><label class="f">Hora</label>
+      <input id="f-hora" type="time" value="${r && r.horario ? r.horario.slice(0,5) : '09:00'}"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="R.fecharModal()">Cancelar</button>
+      <button class="btn primary" onclick="salvar(${r ? `'${r.id}'` : 'null'})">${r ? 'Salvar alterações' : 'Criar rotina'}</button>
+    </div>`, true);
+  mudouFormato(); mudouTipo(); mudouMomento();
+}
+
+function mudouFormato() {
+  const sel = document.getElementById('f-formato');
+  const c = sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.c : 'simples';
+  document.getElementById('f-com').style.display = c === 'comunicacao' ? 'block' : 'none';
+}
+function mudouTipo() {
+  const t = document.getElementById('f-tipo').value;
+  ['semanal','por_data','unica','pos_evento'].forEach(x =>
+    document.getElementById('t-' + x).style.display = x === t ? 'block' : 'none');
+}
+function mudouMomento() {
+  const m = document.getElementById('f-momento').value;
+  document.getElementById('m-periodo').style.display = m === 'periodo' ? 'block' : 'none';
+  document.getElementById('m-hora').style.display = m === 'hora' ? 'block' : 'none';
+}
+
+async function salvar(id) {
+  const nome = document.getElementById('f-nome').value.trim();
+  if (!nome) return R.toast('Dê um nome à rotina', 'err');
+  const tipo = document.getElementById('f-tipo').value;
+  const momento = document.getElementById('f-momento').value;
+  const row = {
+    nome,
+    descricao: document.getElementById('f-desc').value.trim() || null,
+    responsavel_id: document.getElementById('f-resp').value,
+    setor_id: document.getElementById('f-setor').value || null,
+    formato_id: document.getElementById('f-formato').value || null,
+    tipo_recorrencia: tipo,
+    dias_semana: null, dia_mes: null, intervalo_meses: 1, mes_ancora: null,
+    data_unica: null, rotina_pai_id: null, prazo_dias_apos: null,
+    periodo: momento === 'periodo' ? document.getElementById('f-periodo').value : null,
+    horario: momento === 'hora' ? document.getElementById('f-hora').value : null,
+    local_link: null, pauta: null
+  };
+  if (tipo === 'semanal') {
+    row.dias_semana = Array.from(document.querySelectorAll('#t-semanal .chk-pill.on')).map(p => Number(p.dataset.d));
+    if (!row.dias_semana.length) return R.toast('Escolha pelo menos um dia da semana', 'err');
+  } else if (tipo === 'por_data') {
+    row.dia_mes = Number(document.getElementById('f-diames').value);
+    row.intervalo_meses = Number(document.getElementById('f-intervalo').value);
+    row.mes_ancora = Number(document.getElementById('f-mesancora').value);
+    if (!(row.dia_mes >= 1 && row.dia_mes <= 31)) return R.toast('Dia do mês inválido', 'err');
+  } else if (tipo === 'unica') {
+    row.data_unica = document.getElementById('f-data').value;
+    if (!row.data_unica) return R.toast('Escolha a data', 'err');
+  } else if (tipo === 'pos_evento') {
+    row.rotina_pai_id = document.getElementById('f-pai').value;
+    row.prazo_dias_apos = Number(document.getElementById('f-prazo').value);
+    if (!row.rotina_pai_id) return R.toast('Escolha a rotina-evento', 'err');
+  }
+  const sel = document.getElementById('f-formato');
+  const ehCom = sel.selectedOptions[0] && sel.selectedOptions[0].dataset.c === 'comunicacao';
+  let partIds = [];
+  if (ehCom) {
+    row.local_link = document.getElementById('f-local').value.trim() || null;
+    row.pauta = document.getElementById('f-pauta').value.trim() || null;
+    partIds = Array.from(document.querySelectorAll('#f-parts .chk-pill.on')).map(p => p.dataset.id);
+  }
+
+  let rid = id;
+  if (id) {
+    const { error } = await R.sb.from('rotinas').update(row).eq('id', id);
+    if (error) return R.toast('Erro: ' + error.message, 'err');
+  } else {
+    row.criado_por = R.me.id;
+    const { data, error } = await R.sb.from('rotinas').insert(row).select('id').single();
+    if (error) return R.toast('Erro: ' + error.message, 'err');
+    rid = data.id;
+  }
+  await R.sb.from('participantes_rotina').delete().eq('rotina_id', rid);
+  if (partIds.length) {
+    await R.sb.from('participantes_rotina').insert(partIds.map(p => ({ rotina_id: rid, pessoa_id: p })));
+  }
+  const { error: e2 } = await R.sb.rpc(id ? 'rpc_reagendar_rotina' : 'rpc_gerar_ocorrencias', id ? { p_rotina: id } : {});
+  if (e2) console.warn(e2);
+  R.fecharModal();
+  R.toast(id ? 'Rotina atualizada' : 'Rotina criada — tarefas agendadas!', 'ok');
+  await carregar(); render();
+}
+
+function pausar(id) {
+  R.modal(`
+    <div class="modal-title">Pausar rotina</div>
+    <div class="modal-sub">Enquanto pausada, não gera tarefas. As pendências futuras são removidas.</div>
+    <label class="f">Retomar automaticamente em (opcional)</label>
+    <input id="m-ate" type="date">
+    <div class="modal-foot">
+      <button class="btn" onclick="R.fecharModal()">Cancelar</button>
+      <button class="btn primary" id="m-go">Pausar</button>
+    </div>`);
+  document.getElementById('m-go').onclick = async () => {
+    const ate = document.getElementById('m-ate').value || null;
+    const { error } = await R.sb.rpc('rpc_pausar_rotina', { p_rotina: id, p_ate: ate });
+    if (error) return R.toast(error.message, 'err');
+    R.fecharModal(); R.toast('Rotina pausada', 'ok'); await carregar(); render();
+  };
+}
+async function retomar(id) {
+  const { error } = await R.sb.rpc('rpc_retomar_rotina', { p_rotina: id });
+  if (error) return R.toast(error.message, 'err');
+  R.toast('Rotina retomada — tarefas reagendadas', 'ok'); await carregar(); render();
+}
+function encerrar(id) {
+  R.confirmar('Encerrar esta rotina?', 'O histórico fica guardado, mas ela deixa de gerar tarefas. Pendências futuras são removidas.', async () => {
+    const { error } = await R.sb.rpc('rpc_encerrar_rotina', { p_rotina: id });
+    if (error) return R.toast(error.message, 'err');
+    R.toast('Rotina encerrada', 'ok'); await carregar(); render();
+  });
+}
+
+window.recarregar = async () => { await carregar(); render(); };
+
+(async function () {
+  const ok = await R.init('rotinas');
+  if (!ok) return;
+  await carregar(); render();
+})();
+</script>
+</body>
+</html>
