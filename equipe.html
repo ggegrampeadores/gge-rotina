@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <script src="scrum.js"></script>
 </head>
 <body>
 <div class="layout">
@@ -17,6 +18,7 @@
       <div class="page-title">Equipe</div>
       <div class="page-sub" id="sub">Quem está em dia e quem precisa de uma cobrança</div>
     </div>
+    <div id="scrum-faixa"></div>
     <div id="conteudo" class="loading">Carregando…</div>
   </div>
 </div>
@@ -130,12 +132,13 @@ async function verPessoa(id) {
   drill.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-window.recarregar = async () => { await carregar(); render(); if (pessoaSel) verPessoa(pessoaSel); };
+window.recarregar = async () => { await carregar(); render(); if (pessoaSel) verPessoa(pessoaSel); Scrum.recarregar(); };
 
 (async function () {
   const ok = await R.init('equipe');
   if (!ok) return;
   if (!R.souAdmin && !R.souChefe) { location.href = 'dashboard.html'; return; }
+  Scrum.faixa('scrum-faixa', { admin: true });
   await carregar(); render();
 })();
 </script>
