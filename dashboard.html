@@ -187,7 +187,7 @@ function renderDesempenho(el) {
     </div>`;
 }
 
-window.recarregar = async function () { await carregar(); render(); Scrum.recarregar(); };
+window.recarregar = async function () { await carregar(); render(); if (window.Scrum) Scrum.recarregar(); };
 
 (async function () {
   const ok = await R.init('dashboard');
@@ -201,7 +201,7 @@ window.recarregar = async function () { await carregar(); render(); Scrum.recarr
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
     t.classList.add('active'); tabAtual = t.dataset.t; render();
   }));
-  Scrum.faixa('scrum-faixa', { admin: false });
+  if (window.Scrum) { try { Scrum.faixa('scrum-faixa', { admin: false }); } catch (e) { console.error('Scrum:', e); } }
   await carregar(); render();
 })();
 </script>
