@@ -132,13 +132,13 @@ async function verPessoa(id) {
   drill.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-window.recarregar = async () => { await carregar(); render(); if (pessoaSel) verPessoa(pessoaSel); Scrum.recarregar(); };
+window.recarregar = async () => { await carregar(); render(); if (pessoaSel) verPessoa(pessoaSel); if (window.Scrum) Scrum.recarregar(); };
 
 (async function () {
   const ok = await R.init('equipe');
   if (!ok) return;
   if (!R.souAdmin && !R.souChefe) { location.href = 'dashboard.html'; return; }
-  Scrum.faixa('scrum-faixa', { admin: true });
+  if (window.Scrum) { try { Scrum.faixa('scrum-faixa', { admin: true }); } catch (e) { console.error('Scrum:', e); } }
   await carregar(); render();
 })();
 </script>
