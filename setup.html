@@ -62,12 +62,11 @@ async function render() {
           <button class="btn sm ghost" onclick="editarVinculos('${p.id}')">editar</button></td>
         <td>${p.ativo ? '<span class="badge green">sim</span>' : '<span class="badge gray">não</span>'}</td>
         <td style="text-align:right;white-space:nowrap">
-          <button class="btn sm" onclick="resetarSenha('${p.id}')">resetar senha</button>
           <button class="btn sm ${p.ativo ? 'danger' : ''}" onclick="alternarAtivo('${p.id}', ${!p.ativo})">${p.ativo ? 'desativar' : 'reativar'}</button>
         </td></tr>`;
     });
     h += `</tbody></table></div>
-      <div class="hint">Senha inicial e após reset: nome da pessoa + 123 (ex.: Talita123). Cada um pode trocar a própria senha no menu "Minha senha".</div>`;
+      <div class="hint">O login e a senha são os mesmos do Controle Total. Para alguém novo, crie o login no Controle Total e depois adicione a pessoa aqui.</div>`;
     el.innerHTML = h;
 
   } else if (tab === 'setores') {
@@ -183,8 +182,8 @@ async function render() {
 function novaPessoa() {
   R.modal(`
     <div class="modal-title">Nova pessoa</div>
-    <div class="modal-sub">O login é criado junto, com senha Nome+123.</div>
-    <label class="f">Nome (uma palavra, ex.: Joana)</label><input id="np-nome">
+    <div class="modal-sub">A pessoa precisa já ter login no Controle Total.</div>
+    <label class="f">Login do Controle Total (ex.: joana ou joana@ggegrampeadores.com.br)</label><input id="np-nome">
     <label class="f">Papel</label>
     <select id="np-papel"><option value="usuario">Usuário</option><option value="admin">Admin</option></select>
     <div class="modal-foot">
@@ -196,7 +195,7 @@ function novaPessoa() {
     const papel = document.getElementById('np-papel').value;
     const { error } = await R.sb.rpc('rpc_criar_pessoa', { p_nome: nome, p_papel: papel });
     if (error) return R.toast(error.message.replace(/^.*: /, ''), 'err');
-    R.fecharModal(); R.toast(`${nome} cadastrada — login ${nome}${'123'}`, 'ok');
+    R.fecharModal(); R.toast(`${nome} adicionada ao Rotina`, 'ok');
     await recarregarBase(); render();
   };
 }
