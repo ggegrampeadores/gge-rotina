@@ -6,20 +6,10 @@
 - 8 pessoas cadastradas com login, 6 setores, vínculos e papéis conforme definido.
 - Testes de segurança executados: usuária comum não vê dados dos outros nem cria rotina para terceiros; chefe vê só o seu setor; admin vê tudo; sem login não se vê nada.
 
-## Logins iniciais (senha = nome + 123)
+## Login
 
-| Pessoa | Login (campo Nome) | Senha inicial |
-|---|---|---|
-| Marcus | Marcus | Marcus123 |
-| Alex | Alex | Alex123 |
-| Gabriel | Gabriel | Gabriel123 |
-| Talita | Talita | Talita123 |
-| Lorena | Lorena | Lorena123 |
-| Fierrinho | Fierrinho | Fierrinho123 |
-| Maria | Maria | Maria123 |
-| Fierro | Fierro | Fierro123 |
-
-Cada um pode trocar a senha no menu "Minha senha". Admin reseta pelo Setup.
+O Rotina usa o mesmo login e senha do Controle Total (banco CONTROLE TOTAL, schema `rotina`).
+Na tela de entrada a pessoa digita o e-mail completo ou só o nome (vira nome@ggegrampeadores.com.br).
 
 ## Passos para colocar no ar (uma vez só)
 

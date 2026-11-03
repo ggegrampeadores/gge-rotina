@@ -19,19 +19,19 @@
         </div>
       </div>
       <p style="color:var(--muted);font-size:14px;margin:14px 0 4px;line-height:1.5">
-        Bem-vindo! Entre com seu nome e sua senha.
+        Bem-vindo! Entre com o mesmo login e senha do Controle Total.
       </p>
-      <label class="f">Nome</label>
-      <input id="nome" placeholder="Ex.: Talita" autocomplete="username" autofocus>
+      <label class="f">Login</label>
+      <input id="nome" placeholder="Ex.: fierro ou fierro@ggegrampeadores.com.br" autocomplete="username" autofocus>
       <label class="f">Senha</label>
       <input id="senha" type="password" placeholder="Sua senha" autocomplete="current-password">
       <div id="erro" style="display:none;color:var(--red);font-size:13.5px;margin-top:12px;font-weight:600"></div>
       <button class="btn primary" id="entrar" style="width:100%;margin-top:20px;padding:12px;font-size:15px">Entrar</button>
-      <div class="hint" style="text-align:center;margin-top:16px">Primeira vez? Sua senha inicial é seu nome seguido de 123.</div>
+      <div class="hint" style="text-align:center;margin-top:16px">Use o mesmo login e senha do Controle Total.</div>
     </div>
   </div>
   <script>
-    const sb = supabase.createClient(window.ROTINA_URL, window.ROTINA_KEY);
+    const sb = supabase.createClient(window.ROTINA_URL, window.ROTINA_KEY, { db: { schema: window.ROTINA_SCHEMA } });
     // já logado? vai direto
     sb.auth.getSession().then(({ data: { session } }) => {
       if (session) location.href = 'dashboard.html';
@@ -41,14 +41,15 @@
       const senha = document.getElementById('senha').value;
       const erro = document.getElementById('erro');
       erro.style.display = 'none';
-      if (!nome || !senha) { erro.textContent = 'Preencha nome e senha.'; erro.style.display = 'block'; return; }
+      if (!nome || !senha) { erro.textContent = 'Preencha login e senha.'; erro.style.display = 'block'; return; }
       const btn = document.getElementById('entrar');
       btn.disabled = true; btn.textContent = 'Entrando...';
-      const email = nome.toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '@rotina.local';
+      // mesmo login do Controle Total: e-mail completo, ou só o nome (vira nome@ggegrampeadores.com.br)
+      const base = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+      const email = base.includes('@') ? base : base + window.ROTINA_DOMINIO;
       const { error } = await sb.auth.signInWithPassword({ email, password: senha });
       if (error) {
-        erro.textContent = 'Nome ou senha incorretos. Confira e tente de novo.';
+        erro.textContent = 'Login ou senha incorretos. Confira e tente de novo.';
         erro.style.display = 'block';
         btn.disabled = false; btn.textContent = 'Entrar';
         return;

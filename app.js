@@ -1,6 +1,6 @@
 // ============ Rotina GGE — núcleo compartilhado ============
 window.R = (function () {
-  const sb = supabase.createClient(window.ROTINA_URL, window.ROTINA_KEY);
+  const sb = supabase.createClient(window.ROTINA_URL, window.ROTINA_KEY, { db: { schema: window.ROTINA_SCHEMA } });
   const R = { sb, me: null, cfg: {}, pessoas: [], setores: [], vinculos: [], formatos: [], souAdmin: false, souChefe: false };
 
   // ---------- datas ----------
